@@ -2,175 +2,213 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8" />
-    <title>Сканер билетов</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-
-    <!-- Библиотека для чтения QR-кода -->
+    <title>QR Сканер</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <link rel="manifest" href="manifest.json">
     <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
 
     <style>
-        * {
-            box-sizing: border-box;
-            margin: 0;
-            padding: 0;
-        }
-
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        html, body { width: 100%; height: 100%; }
         body {
-            font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
-            background: #000;
+            font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+            background: #1b1b1d;
             color: #fff;
-            height: 100vh;
             overflow: hidden;
+            -webkit-font-smoothing: antialiased;
+            text-rendering: geometricPrecision;
         }
-
         .app {
             position: relative;
             width: 100%;
             height: 100%;
-            background: #111827;
-        }
-
-        /* Верхняя панель как в приложении */
-        .top-bar {
-            height: 56px;
-            background: #020617;
+            min-height: 100vh;
             display: flex;
-            align-items: center;
-            padding: 0 16px;
-            gap: 12px;
+            flex-direction: column;
+            background: #1b1b1d;
         }
 
-        .top-bar button {
-            border: none;
-            background: transparent;
-            color: #fff;
-            font-size: 20px;
-            cursor: pointer;
+        .top-section {
+            position: relative;
+            height: 320px;
+            flex: 0 0 320px;
+            background: #1b1b1d;
+            z-index: 10;
+        }
+
+        .top-bar {
+            height: 96px;
+            padding: 70px 28px 0 27px;
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
         }
 
         .top-bar-title {
             flex: 1;
-            font-size: 14px;
-            font-weight: 600;
+            margin: 5px 22px 0 24px;
+            color: #ececef;
+            font-size: 13px;
+            line-height: 17px;
+            font-weight: 700;
+            letter-spacing: 0.8px;
             text-transform: uppercase;
-            text-align: center;
+            white-space: nowrap;
+            text-align: left;
         }
 
-        .top-bar-icon {
-            width: 20px;
-            text-align: right;
-            font-size: 18px;
-            opacity: 0.8;
-        }
-
-        /* Камера */
-        .camera-wrapper {
-            position: relative;
-            width: 100%;
-            height: calc(100vh - 56px - 72px); /* минус верхняя и нижняя панели */
-            background: #000;
-            overflow: hidden;
-        }
-
-        video {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
-        }
-
-        /* Жёлтая линия как в приложении */
-        .scan-line {
-            position: absolute;
-            left: 0;
-            right: 0;
-            bottom: 72px;
-            height: 2px;
-            background: #facc15;
-        }
-
-        /* Нижняя кнопка */
-        .bottom-bar {
-            height: 72px;
-            background: #020617;
+        .icon-btn {
+            width: 23px;
+            height: 30px;
             display: flex;
             align-items: center;
             justify-content: center;
-            padding: 12px 16px 20px;
+            color: #fff;
+        }
+
+        .back-icon svg {
+            width: 17px;
+            height: 29px;
+            display: block;
+        }
+
+        .flash-icon {
+            margin-top: 2px;
+        }
+
+        .flash-icon svg {
+            width: 18px;
+            height: 28px;
+            display: block;
+        }
+
+        .camera-wrapper { position: relative; flex: 1; background: #000; overflow: hidden; }
+        video { width: 100%; height: 100%; object-fit: cover; }
+
+        .scan-line {
+            position: absolute; left: 0; right: 0; top: 50%; height: 2px;
+            background: #facc15; box-shadow: 0 0 15px #facc15;
+            animation: scan 2s infinite ease-in-out;
+        }
+        @keyframes scan {
+            0%, 100% { transform: translateY(-120px); }
+            50% { transform: translateY(120px); }
+        }
+
+        /* Success banner */
+        #ticketBanner {
+            display: none;
+            position: absolute;
+            top: 218px;
+            left: 60px;
+            right: 61px;
+            height: 83px;
+            background: #fff;
+            border-radius: 8px;
+            box-shadow: none;
+            z-index: 100;
+            overflow: hidden;
+            animation: fadeIn 0.16s ease-out;
+        }
+
+        #ticketBanner::before {
+            content: '';
+            position: absolute;
+            left: 0; top: 0; bottom: 0;
+            width: 7px;
+            background: #59d37b;
+        }
+
+        .banner-content {
+            height: 100%;
+            padding: 0 24px 0 42px;
+            display: flex;
+            align-items: center;
+            justify-content: flex-start;
+        }
+
+        .banner-title {
+            color: #111;
+            font-size: 14px;
+            line-height: 18px;
+            font-weight: 700;
+            letter-spacing: -0.1px;
+            white-space: nowrap;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        .bottom-bar {
+            height: 320px;
+            flex: 0 0 320px;
+            background: #1b1b1d;
+            display: flex;
+            align-items: flex-end;
+            padding: 0 16px 102px;
         }
 
         .manual-btn {
             width: 100%;
-            border-radius: 10px;
+            height: 54px;
+            border-radius: 4px;
             border: none;
-            background: #1f2937;
-            color: #e5e7eb;
-            padding: 12px;
-            font-size: 15px;
-            font-weight: 500;
-            cursor: pointer;
+            background: #343846;
+            color: #fff;
+            font-family: inherit;
+            font-size: 14px;
+            line-height: 18px;
+            font-weight: 600;
         }
 
-        .manual-btn:active {
-            background: #374151;
-        }
-
-        /* Зелёный баннер "БИЛЕТ НАЙДЕН" */
-        .ticket-banner {
-            position: fixed;
-            top: 56px; /* сразу под верхней панелью */
-            left: 0;
-            right: 0;
-            background: #16a34a;
-            color: #ecfdf5;
-            text-align: center;
-            padding: 12px 16px;
-            font-size: 15px;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 0.03em;
-            transform: translateY(-110%);
-            opacity: 0;
-            transition: transform 0.25s ease-out, opacity 0.25s ease-out;
-            z-index: 20;
-        }
-
-        .ticket-banner.visible {
-            transform: translateY(0);
-            opacity: 1;
-        }
-
-        /* Небольшой оверлей для текста результата (по желанию) */
-        .qr-result {
-            position: absolute;
-            left: 0;
-            right: 0;
-            bottom: 82px;
-            padding: 8px 14px;
-            font-size: 12px;
-            color: #d1d5db;
-            text-align: center;
-            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+        @media (max-width: 430px) {
+            .top-section { height: 213px; flex-basis: 213px; }
+            .top-bar { height: 96px; padding: 69px 19px 0 19px; }
+            .top-bar-title { margin: 4px 15px 0 17px; font-size: 12px; line-height: 16px; letter-spacing: 0.63px; }
+            #ticketBanner { top: 145px; left: 40px; right: 40px; height: 56px; border-radius: 6px; }
+            #ticketBanner::before { width: 5px; }
+            .banner-content { padding-left: 28px; padding-right: 18px; }
+            .banner-title { font-size: 13px; line-height: 17px; }
+            .bottom-bar { height: 213px; flex-basis: 213px; padding: 0 11px 68px; }
+            .manual-btn { height: 36px; border-radius: 3px; font-size: 10px; line-height: 13px; }
+            .back-icon svg { width: 13px; height: 24px; }
+            .flash-icon svg { width: 15px; height: 24px; }
         }
     </style>
 </head>
-<body>
-<div class="app">
-    <div class="top-bar">
-        <button aria-label="Назад">‹</button>
-        <div class="top-bar-title">
-            СКАНИРУЙТЕ (QR ИЛИ BAR)-КОД БИЛЕТА
-        </div>
-        <div class="top-bar-icon">🗑️</div>
-    </div>
+<body onclick="unlockAudio()">
 
-    <div class="ticket-banner" id="ticketBanner">
-        БИЛЕТ НАЙДЕН
+<div class="app">
+    <div class="top-section">
+        <div class="top-bar">
+            <div class="icon-btn back-icon" aria-label="Назад">
+                <svg viewBox="0 0 18 30" fill="none" aria-hidden="true">
+                    <path d="M15 3L3 15L15 27" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+            </div>
+            <div class="top-bar-title">СКАНИРУЙТЕ (QR ИЛИ BAR)-КОД БИЛЕТА</div>
+            <div class="icon-btn flash-icon" aria-label="Фонарик">
+                <svg viewBox="0 0 18 28" fill="none" aria-hidden="true">
+                    <path d="M4.7 2.5H13.3" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/>
+                    <path d="M5.7 6.2H12.3" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/>
+                    <path d="M6.2 7.8H11.8L10.9 11.3V23.1C10.9 24.4 10 25.4 8.9 25.4C7.8 25.4 7 24.4 7 23.1V11.3L6.2 7.8Z" fill="currentColor"/>
+                    <path d="M7.2 14.2H10.7" stroke="#1b1b1d" stroke-width="1.2" stroke-linecap="round" opacity="0.45"/>
+                </svg>
+            </div>
+        </div>
+
+        <div id="ticketBanner">
+            <div class="banner-content">
+                <span class="banner-title">Билет принят - Фан-зона</span>
+            </div>
+        </div>
     </div>
 
     <div class="camera-wrapper">
         <video id="video" autoplay playsinline></video>
         <div class="scan-line"></div>
-        <div class="qr-result" id="qrResult"></div>
     </div>
 
     <div class="bottom-bar">
@@ -181,89 +219,65 @@
 <script>
     const video = document.getElementById('video');
     const banner = document.getElementById('ticketBanner');
-    const qrResult = document.getElementById('qrResult');
-
-    // !!! ВАЖНО: сюда вставь ПРЯМОЙ .mp3-адрес звука из myinstants
-    // Пример: const beepSound = new Audio('https://.../iphone_apple_store.mp3');
     const beepSound = new Audio('https://www.myinstants.com/media/sounds/iphone-apple-store-sound.mp3');
+    
+    let isAudioUnlocked = false;
 
-    // чтобы звук не лагал при первом проигрывании
-    beepSound.preload = 'auto';
+    function unlockAudio() {
+        if (!isAudioUnlocked) {
+            beepSound.play().then(() => {
+                beepSound.pause();
+                beepSound.currentTime = 0;
+                isAudioUnlocked = true;
+            }).catch(() => {});
+        }
+    }
 
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
     let lastScanTime = 0;
 
-    function showBanner(text) {
-        banner.textContent = text || 'БИЛЕТ НАЙДЕН';
-        banner.classList.add('visible');
-
-        setTimeout(() => {
-            banner.classList.remove('visible');
-        }, 2000);
-    }
-
-    function onTicketFound(data) {
-        const now = Date.now();
-        // Защита от спама: не чаще, чем раз в 3 секунды
-        if (now - lastScanTime < 3000) return;
-        lastScanTime = now;
-
-        qrResult.textContent = 'Данные QR: ' + data;
-
-        // звук может не сыграть, если браузер ещё не видел действий пользователя
-        beepSound.currentTime = 0;
-        beepSound.play().catch(() => {
-            // если браузер заблокировал автоплей, просто игнорим
-        });
-
-        showBanner('БИЛЕТ НАЙДЕН');
-    }
-
-    // Запуск камеры
     async function startCamera() {
         try {
             const stream = await navigator.mediaDevices.getUserMedia({
-                video: {
-                    facingMode: { ideal: 'environment' } // основная камера на телефоне
-                },
+                video: { facingMode: 'environment' },
                 audio: false
             });
             video.srcObject = stream;
-            scanLoop();
+            video.play();
+            requestAnimationFrame(tick);
         } catch (err) {
-            alert('Не получилось получить доступ к камере: ' + err.message);
+            console.error(err);
         }
     }
 
-    // Сканирование QR-кода
-    function scanLoop() {
-        const canvas = document.createElement('canvas');
-        const ctx = canvas.getContext('2d');
+    function tick() {
+        if (video.readyState === video.HAVE_ENOUGH_DATA) {
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            const code = jsQR(imageData.data, imageData.width, imageData.height);
 
-        function tick() {
-            if (video.readyState === video.HAVE_ENOUGH_DATA) {
-                canvas.width = video.videoWidth;
-                canvas.height = video.videoHeight;
-
-                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-                const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-
-                const code = jsQR(imageData.data, imageData.width, imageData.height, {
-                    inversionAttempts: 'dontInvert'
-                });
-
-                if (code) {
-                    onTicketFound(code.data);
-                }
+            if (code && (Date.now() - lastScanTime > 3000)) {
+                lastScanTime = Date.now();
+                onTicketDetected();
             }
-
-            requestAnimationFrame(tick);
         }
-
         requestAnimationFrame(tick);
     }
 
-    // На iOS звук/камера лучше работают после первого тапа,
-    // но старт мы всё равно пробуем сразу.
+    function onTicketDetected() {
+        beepSound.currentTime = 0;
+        beepSound.play().catch(() => {});
+
+        banner.style.display = 'block';
+
+        setTimeout(() => {
+            banner.style.display = 'none';
+        }, 2000);
+    }
+
     startCamera();
 </script>
 </body>
