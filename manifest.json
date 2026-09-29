@@ -1,6 +1,6 @@
 {
-  "short_name": "Сканер",
-  "name": "Сканер Билетов QR",
+  "short_name": "ShowGo scanner",
+  "name": "ShowGo scanner",
   "icons": [
     {
       "src": "https://cdn-icons-png.flaticon.com/512/241/241528.png",
