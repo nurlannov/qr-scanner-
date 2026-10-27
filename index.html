@@ -7,32 +7,17 @@
     <link rel="manifest" href="manifest.json">
     <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
 
-    <!-- ================= ПОДКЛЮЧЕНИЕ FIREBASE ================= -->
+    <!-- ================= ПОДКЛЮЧЕНИЕ SUPABASE ================= -->
     <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-        import { getFirestore, collection, addDoc, getDocs, deleteDoc, doc } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+        import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
 
-        // ВАШИ КЛЮЧИ ИЗ FIREBASE
-        const firebaseConfig = {
-            apiKey: "AIzaSyCbKhplwFcYbn7ziRMLRK8KMORywjua4R4",
-            authDomain: "kassir-qr.firebaseapp.com",
-            projectId: "kassir-qr",
-            storageBucket: "kassir-qr.firebasestorage.app",
-            messagingSenderId: "369942228848",
-            appId: "1:369942228848:web:324fcc0965aeab310329b5",
-            measurementId: "G-Z33QE964FB"
-        };
+        // ВСТАВЬТЕ СВОИ ДАННЫЕ: Supabase -> Project Settings -> API
+        const SUPABASE_URL = "https://wpepxzzdwndadiatjwhe.supabase.co";
+        const SUPABASE_ANON_KEY = "sb_publishable_A45Fj9H25tBfuJt4lHZROg_5rWK81mU";
+        const SUPABASE_SECRET_KEY= "SUPABASE_SECRET_KEY="
+        const SUPABASE_JWKS_URL= "https://wpepxzzdwndadiatjwhe.supabase.co/auth/v1/.well-known/jwks.json"
 
-        const app = initializeApp(firebaseConfig);
-        const db = getFirestore(app);
-
-        // Экспортируем функции в глобальную область, чтобы обычный скрипт мог их использовать
-        window.db = db;
-        window.fbCollection = collection;
-        window.fbAddDoc = addDoc;
-        window.fbGetDocs = getDocs;
-        window.fbDeleteDoc = deleteDoc;
-        window.fbDoc = doc;
+        window.sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
     </script>
 
     <style>
@@ -105,6 +90,11 @@
 
         .camera-wrapper { position: relative; flex: 1; background: #000; overflow: hidden; }
         video { width: 100%; height: 100%; object-fit: cover; }
+        #zoomSlider {
+            position: absolute; z-index: 5; left: 18px; right: 18px; bottom: 12px;
+            width: calc(100% - 36px); accent-color: #facc15; touch-action: none;
+        }
+        .camera-wrapper { touch-action: none; }
 
         .scan-line {
             position: absolute; left: 0; right: 0; top: 50%; height: 2px;
@@ -367,6 +357,7 @@
         <div class="camera-wrapper">
             <video id="video" autoplay playsinline></video>
             <div class="scan-line"></div>
+            <input id="zoomSlider" type="range" min="1" max="8" step="0.1" value="1" aria-label="Масштаб камеры">
         </div>
 
         <div class="bottom-bar">
@@ -393,11 +384,25 @@
     // ================= ЛОГИКА СКАНЕРА =================
     const video = document.getElementById('video');
     const banner = document.getElementById('ticketBanner');
+    const cameraWrapper = document.querySelector('.camera-wrapper');
+    const zoomSlider = document.getElementById('zoomSlider');
+    const SCAN_COOLDOWN = 5000;
+    const QR_CLEAR_TIME = 1500;
+    const SCAN_INTERVAL = 150;
+    const MAX_ZOOM = 8;
     const beepSound = new Audio('https://www.myinstants.com/media/sounds/iphone-apple-store-sound.mp3');
     
     let isAudioUnlocked = false;
     let stream = null;
     let scanning = false;
+    let currentZoom = 1;
+    let hardwareZoom = false;
+    let lastAcceptedTime = 0;
+    let lastCodeText = null;
+    let codeClearTimer = null;
+    let lastFrameScanTime = 0;
+    let pinchStartDistance = 0;
+    let pinchStartZoom = 1;
 
     function unlockAudio() {
         if (!isAudioUnlocked) {
@@ -411,7 +416,56 @@
 
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
-    let lastScanTime = 0;
+
+    function drawVideoFrame(targetCtx, targetCanvas) {
+        const width = video.videoWidth;
+        const height = video.videoHeight;
+        if (!width || !height) return false;
+        targetCanvas.width = width;
+        targetCanvas.height = height;
+        if (hardwareZoom || currentZoom <= 1) {
+            targetCtx.drawImage(video, 0, 0, width, height);
+        } else {
+            const cropWidth = width / currentZoom;
+            const cropHeight = height / currentZoom;
+            const sx = (width - cropWidth) / 2;
+            const sy = (height - cropHeight) / 2;
+            targetCtx.drawImage(video, sx, sy, cropWidth, cropHeight, 0, 0, width, height);
+        }
+        return true;
+    }
+
+    function setZoom(value) {
+        const min = Number(zoomSlider.min) || 1;
+        const max = Number(zoomSlider.max) || MAX_ZOOM;
+        currentZoom = Math.max(min, Math.min(max, Number(value)));
+        zoomSlider.value = String(currentZoom);
+        if (hardwareZoom && stream) {
+            const track = stream.getVideoTracks()[0];
+            track.applyConstraints({ advanced: [{ zoom: currentZoom }] }).catch(() => {
+                hardwareZoom = false;
+                video.style.transform = `scale(${currentZoom})`;
+            });
+        } else {
+            video.style.transform = `scale(${currentZoom})`;
+            video.style.transformOrigin = 'center center';
+        }
+    }
+
+    zoomSlider.addEventListener('input', () => setZoom(zoomSlider.value));
+    cameraWrapper.addEventListener('touchstart', event => {
+        if (event.touches.length === 2) {
+            pinchStartDistance = Math.hypot(event.touches[0].clientX - event.touches[1].clientX, event.touches[0].clientY - event.touches[1].clientY);
+            pinchStartZoom = currentZoom;
+        }
+    }, { passive: false });
+    cameraWrapper.addEventListener('touchmove', event => {
+        if (event.touches.length === 2) {
+            event.preventDefault();
+            const distance = Math.hypot(event.touches[0].clientX - event.touches[1].clientX, event.touches[0].clientY - event.touches[1].clientY);
+            if (pinchStartDistance) setZoom(pinchStartZoom * distance / pinchStartDistance);
+        }
+    }, { passive: false });
 
     async function startCamera() {
         if (stream) return;
@@ -422,6 +476,19 @@
             });
             video.srcObject = stream;
             video.play();
+            const track = stream.getVideoTracks()[0];
+            const capabilities = track.getCapabilities ? track.getCapabilities() : {};
+            hardwareZoom = !!capabilities.zoom;
+            if (hardwareZoom) {
+                zoomSlider.min = String(capabilities.zoom.min || 1);
+                zoomSlider.max = String(Math.min(capabilities.zoom.max || MAX_ZOOM, MAX_ZOOM));
+                zoomSlider.step = String(capabilities.zoom.step || 0.1);
+            } else {
+                zoomSlider.min = '1';
+                zoomSlider.max = String(MAX_ZOOM);
+                zoomSlider.step = '0.1';
+            }
+            setZoom(currentZoom);
             scanning = true;
             requestAnimationFrame(tick);
         } catch (err) {
@@ -439,22 +506,29 @@
 
     function tick() {
         if (!scanning) return;
-        if (video.readyState === video.HAVE_ENOUGH_DATA) {
-            canvas.width = video.videoWidth;
-            canvas.height = video.videoHeight;
-            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-            const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-            const code = jsQR(imageData.data, imageData.width, imageData.height);
-
-            if (code && (Date.now() - lastScanTime > 3000)) {
-                lastScanTime = Date.now();
-                onTicketDetected();
+        const now = Date.now();
+        if (video.readyState === video.HAVE_ENOUGH_DATA && now - lastFrameScanTime >= SCAN_INTERVAL) {
+            lastFrameScanTime = now;
+            if (drawVideoFrame(ctx, canvas)) {
+                const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                const code = jsQR(imageData.data, imageData.width, imageData.height);
+                if (code) {
+                    if (codeClearTimer) { clearTimeout(codeClearTimer); codeClearTimer = null; }
+                    if (code.data !== lastCodeText && now - lastAcceptedTime >= SCAN_COOLDOWN) {
+                        lastCodeText = code.data;
+                        lastAcceptedTime = now;
+                        onTicketDetected();
+                    }
+                } else if (lastCodeText && !codeClearTimer) {
+                    codeClearTimer = setTimeout(() => { lastCodeText = null; codeClearTimer = null; }, QR_CLEAR_TIME);
+                }
             }
         }
         requestAnimationFrame(tick);
     }
 
     function onTicketDetected() {
+        lastAcceptedTime = Date.now();
         beepSound.currentTime = 0;
         beepSound.play().catch(() => {});
         banner.style.display = 'block';
@@ -463,16 +537,12 @@
         }, 2000);
     }
 
-    // ================= ЛОГИКА ФОТОГРАФИРОВАНИЯ (CLOUDINARY + FIRESTORE) =================
+    // ================= ЛОГИКА ФОТОГРАФИРОВАНИЯ (CLOUDINARY + SUPABASE) =================
     async function capturePhoto() {
         if (video.readyState === video.HAVE_ENOUGH_DATA) {
-            canvas.width = video.videoWidth;
-            canvas.height = video.videoHeight;
-            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            drawVideoFrame(ctx, canvas);
             
             const dataUrl = canvas.toDataURL('image/jpeg', 0.6);
-            const id = Date.now().toString();
-            const dateStr = new Date().toLocaleString('ru-RU');
 
             try {
                 // 1. Отправляем фото в Cloudinary
@@ -497,14 +567,13 @@
                 const downloadURL = data.secure_url;
                 const fileName = data.public_id + "." + data.format;
 
-                // 2. Сохраняем ссылку в Firestore (база данных Firebase)
-                await window.fbAddDoc(window.fbCollection(window.db, "tickets"), {
+                // 2. Сохраняем ссылку в Supabase (таблица tickets)
+                const { error } = await window.sb.from('tickets').insert({
                     url: downloadURL,
-                    date: dateStr,
-                    fileName: fileName,
-                    publicId: data.public_id,
-                    timestamp: Date.now()
+                    file_name: fileName,
+                    public_id: data.public_id
                 });
+                if (error) throw error;
 
                 // Звук и баннер. Остаемся на сканере.
                 onTicketDetected();
@@ -537,19 +606,15 @@
         list.innerHTML = '<div class="empty-state">Загрузка из облака...</div>';
         
         try {
-            const querySnapshot = await window.fbGetDocs(window.fbCollection(window.db, "tickets"));
-            let items = [];
-            
-            querySnapshot.forEach((doc) => {
-                items.push({ id: doc.id, ...doc.data() });
-            });
-
-            // Сортируем по времени (новые сверху)
-            items.sort((a, b) => b.timestamp - a.timestamp);
+            const { data: items, error } = await window.sb
+                .from('tickets')
+                .select('*')
+                .order('created_at', { ascending: false });
+            if (error) throw error;
 
             list.innerHTML = '';
-            
-            if (items.length === 0) {
+
+            if (!items || items.length === 0) {
                 list.innerHTML = `
                     <div class="empty-state">
                         Нет сохраненных QR-кодов.<br>
@@ -564,20 +629,24 @@
                 const card = document.createElement('div');
                 card.className = 'gallery-card';
                 card.innerHTML = `
-                    <img src="${item.url}" alt="QR" crossorigin="anonymous">
+                    <img alt="QR">
                     <div class="card-info">
-                        <div class="card-date">${item.date}</div>
+                        <div class="card-date"></div>
                         <div class="card-actions">
-                            <button class="btn-download" onclick="downloadPhoto('${item.url}', '${item.fileName}')">Скачать</button>
-                            <button class="btn-delete" onclick="deletePhoto('${item.id}')">Удалить</button>
+                            <button class="btn-download">Скачать</button>
+                            <button class="btn-delete">Удалить</button>
                         </div>
                     </div>
                 `;
+                card.querySelector('img').src = item.url;
+                card.querySelector('.card-date').textContent = new Date(item.created_at).toLocaleString('ru-RU');
+                card.querySelector('.btn-download').addEventListener('click', () => downloadPhoto(item.url, item.file_name));
+                card.querySelector('.btn-delete').addEventListener('click', () => deletePhoto(item.id));
                 list.appendChild(card);
             });
         } catch (error) {
             console.error("Ошибка загрузки: ", error);
-            list.innerHTML = '<div class="empty-state">Ошибка загрузки данных. Проверьте интернет и правила Firestore.</div>';
+            list.innerHTML = '<div class="empty-state">Ошибка загрузки данных. Проверьте интернет, ключи Supabase и политики доступа (RLS).</div>';
         }
     }
 
@@ -594,12 +663,14 @@
     async function deletePhoto(id) {
         if(confirm("Удалить этот снимок из галереи?")) {
             try {
-                // Удаляем запись из Firestore
-                await window.fbDeleteDoc(window.fbDoc(window.db, "tickets", id));
-                
+                // Удаляем запись из Supabase
+                const { data, error } = await window.sb.from('tickets').delete().eq('id', id).select();
+                if (error) throw error;
+                if (!data || data.length === 0) throw new Error("Запись не удалена (проверьте политику delete в RLS)");
+
                 // Само фото остается в Cloudinary, но пропадает из списка приложения.
                 // Чтобы удалить его навсегда из Cloudinary, нужен серверный скрипт с секретным API-ключом.
-                
+
                 renderGallery();
             } catch (error) {
                 console.error("Ошибка удаления: ", error);
@@ -610,6 +681,7 @@
 
     // ================= СТАРТ =================
     window.onload = () => {
+        if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
         showScanner();
     };
 

@@ -5,4 +5,4 @@ self.addEventListener('install', (e) => {
 self.addEventListener('fetch', (e) => {
   // Просто пропускаем запросы, этого достаточно для установки
   e.respondWith(fetch(e.request));
-});
+}); 
