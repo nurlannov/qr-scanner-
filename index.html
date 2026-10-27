@@ -90,14 +90,6 @@
 
         .camera-wrapper { position: relative; flex: 1; background: #000; overflow: hidden; }
         video { width: 100%; height: 100%; object-fit: cover; }
-<<<<<<< HEAD
-        #zoomSlider {
-            position: absolute; z-index: 5; left: 18px; right: 18px; bottom: 12px;
-            width: calc(100% - 36px); accent-color: #facc15; touch-action: none;
-        }
-        .camera-wrapper { touch-action: none; }
-=======
->>>>>>> 3bbfa5b411505194316747e92ea9bc5803d84d89
 
         .scan-line {
             position: absolute; left: 0; right: 0; top: 50%; height: 2px;
@@ -360,10 +352,6 @@
         <div class="camera-wrapper">
             <video id="video" autoplay playsinline></video>
             <div class="scan-line"></div>
-<<<<<<< HEAD
-            <input id="zoomSlider" type="range" min="1" max="8" step="0.1" value="1" aria-label="Масштаб камеры">
-=======
->>>>>>> 3bbfa5b411505194316747e92ea9bc5803d84d89
         </div>
 
         <div class="bottom-bar">
@@ -390,31 +378,11 @@
     // ================= ЛОГИКА СКАНЕРА =================
     const video = document.getElementById('video');
     const banner = document.getElementById('ticketBanner');
-<<<<<<< HEAD
-    const cameraWrapper = document.querySelector('.camera-wrapper');
-    const zoomSlider = document.getElementById('zoomSlider');
-    const SCAN_COOLDOWN = 5000;
-    const QR_CLEAR_TIME = 1500;
-    const SCAN_INTERVAL = 150;
-    const MAX_ZOOM = 8;
-=======
->>>>>>> 3bbfa5b411505194316747e92ea9bc5803d84d89
     const beepSound = new Audio('https://www.myinstants.com/media/sounds/iphone-apple-store-sound.mp3');
     
     let isAudioUnlocked = false;
     let stream = null;
     let scanning = false;
-<<<<<<< HEAD
-    let currentZoom = 1;
-    let hardwareZoom = false;
-    let lastAcceptedTime = 0;
-    let lastCodeText = null;
-    let codeClearTimer = null;
-    let lastFrameScanTime = 0;
-    let pinchStartDistance = 0;
-    let pinchStartZoom = 1;
-=======
->>>>>>> 3bbfa5b411505194316747e92ea9bc5803d84d89
 
     function unlockAudio() {
         if (!isAudioUnlocked) {
@@ -428,60 +396,7 @@
 
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
-<<<<<<< HEAD
-
-    function drawVideoFrame(targetCtx, targetCanvas) {
-        const width = video.videoWidth;
-        const height = video.videoHeight;
-        if (!width || !height) return false;
-        targetCanvas.width = width;
-        targetCanvas.height = height;
-        if (hardwareZoom || currentZoom <= 1) {
-            targetCtx.drawImage(video, 0, 0, width, height);
-        } else {
-            const cropWidth = width / currentZoom;
-            const cropHeight = height / currentZoom;
-            const sx = (width - cropWidth) / 2;
-            const sy = (height - cropHeight) / 2;
-            targetCtx.drawImage(video, sx, sy, cropWidth, cropHeight, 0, 0, width, height);
-        }
-        return true;
-    }
-
-    function setZoom(value) {
-        const min = Number(zoomSlider.min) || 1;
-        const max = Number(zoomSlider.max) || MAX_ZOOM;
-        currentZoom = Math.max(min, Math.min(max, Number(value)));
-        zoomSlider.value = String(currentZoom);
-        if (hardwareZoom && stream) {
-            const track = stream.getVideoTracks()[0];
-            track.applyConstraints({ advanced: [{ zoom: currentZoom }] }).catch(() => {
-                hardwareZoom = false;
-                video.style.transform = `scale(${currentZoom})`;
-            });
-        } else {
-            video.style.transform = `scale(${currentZoom})`;
-            video.style.transformOrigin = 'center center';
-        }
-    }
-
-    zoomSlider.addEventListener('input', () => setZoom(zoomSlider.value));
-    cameraWrapper.addEventListener('touchstart', event => {
-        if (event.touches.length === 2) {
-            pinchStartDistance = Math.hypot(event.touches[0].clientX - event.touches[1].clientX, event.touches[0].clientY - event.touches[1].clientY);
-            pinchStartZoom = currentZoom;
-        }
-    }, { passive: false });
-    cameraWrapper.addEventListener('touchmove', event => {
-        if (event.touches.length === 2) {
-            event.preventDefault();
-            const distance = Math.hypot(event.touches[0].clientX - event.touches[1].clientX, event.touches[0].clientY - event.touches[1].clientY);
-            if (pinchStartDistance) setZoom(pinchStartZoom * distance / pinchStartDistance);
-        }
-    }, { passive: false });
-=======
     let lastScanTime = 0;
->>>>>>> 3bbfa5b411505194316747e92ea9bc5803d84d89
 
     async function startCamera() {
         if (stream) return;
@@ -492,22 +407,6 @@
             });
             video.srcObject = stream;
             video.play();
-<<<<<<< HEAD
-            const track = stream.getVideoTracks()[0];
-            const capabilities = track.getCapabilities ? track.getCapabilities() : {};
-            hardwareZoom = !!capabilities.zoom;
-            if (hardwareZoom) {
-                zoomSlider.min = String(capabilities.zoom.min || 1);
-                zoomSlider.max = String(Math.min(capabilities.zoom.max || MAX_ZOOM, MAX_ZOOM));
-                zoomSlider.step = String(capabilities.zoom.step || 0.1);
-            } else {
-                zoomSlider.min = '1';
-                zoomSlider.max = String(MAX_ZOOM);
-                zoomSlider.step = '0.1';
-            }
-            setZoom(currentZoom);
-=======
->>>>>>> 3bbfa5b411505194316747e92ea9bc5803d84d89
             scanning = true;
             requestAnimationFrame(tick);
         } catch (err) {
@@ -525,24 +424,6 @@
 
     function tick() {
         if (!scanning) return;
-<<<<<<< HEAD
-        const now = Date.now();
-        if (video.readyState === video.HAVE_ENOUGH_DATA && now - lastFrameScanTime >= SCAN_INTERVAL) {
-            lastFrameScanTime = now;
-            if (drawVideoFrame(ctx, canvas)) {
-                const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-                const code = jsQR(imageData.data, imageData.width, imageData.height);
-                if (code) {
-                    if (codeClearTimer) { clearTimeout(codeClearTimer); codeClearTimer = null; }
-                    if (code.data !== lastCodeText && now - lastAcceptedTime >= SCAN_COOLDOWN) {
-                        lastCodeText = code.data;
-                        lastAcceptedTime = now;
-                        onTicketDetected();
-                    }
-                } else if (lastCodeText && !codeClearTimer) {
-                    codeClearTimer = setTimeout(() => { lastCodeText = null; codeClearTimer = null; }, QR_CLEAR_TIME);
-                }
-=======
         if (video.readyState === video.HAVE_ENOUGH_DATA) {
             canvas.width = video.videoWidth;
             canvas.height = video.videoHeight;
@@ -553,17 +434,12 @@
             if (code && (Date.now() - lastScanTime > 3000)) {
                 lastScanTime = Date.now();
                 onTicketDetected();
->>>>>>> 3bbfa5b411505194316747e92ea9bc5803d84d89
             }
         }
         requestAnimationFrame(tick);
     }
 
     function onTicketDetected() {
-<<<<<<< HEAD
-        lastAcceptedTime = Date.now();
-=======
->>>>>>> 3bbfa5b411505194316747e92ea9bc5803d84d89
         beepSound.currentTime = 0;
         beepSound.play().catch(() => {});
         banner.style.display = 'block';
@@ -575,13 +451,9 @@
     // ================= ЛОГИКА ФОТОГРАФИРОВАНИЯ (CLOUDINARY + SUPABASE) =================
     async function capturePhoto() {
         if (video.readyState === video.HAVE_ENOUGH_DATA) {
-<<<<<<< HEAD
-            drawVideoFrame(ctx, canvas);
-=======
             canvas.width = video.videoWidth;
             canvas.height = video.videoHeight;
             ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
->>>>>>> 3bbfa5b411505194316747e92ea9bc5803d84d89
             
             const dataUrl = canvas.toDataURL('image/jpeg', 0.6);
 
