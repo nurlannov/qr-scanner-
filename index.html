@@ -91,22 +91,6 @@
         .camera-wrapper { position: relative; flex: 1; background: #000; overflow: hidden; touch-action: none; }
         video { width: 100%; height: 100%; object-fit: cover; transform-origin: center center; }
 
-        /* Зум: двигается только картинка с камеры, интерфейс остается на месте */
-        .zoom-control {
-            position: absolute;
-            left: 16px; right: 16px; bottom: 12px;
-            z-index: 5;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            padding: 6px 14px;
-            background: rgba(0,0,0,0.45);
-            border-radius: 20px;
-            touch-action: auto;
-        }
-        .zoom-control input[type=range] { flex: 1; accent-color: #facc15; }
-        .zoom-label { min-width: 36px; text-align: right; font-size: 12px; font-weight: 600; color: #fff; }
-
         .scan-line {
             position: absolute; left: 0; right: 0; top: 50%; height: 2px;
             background: #facc15; box-shadow: 0 0 15px #facc15;
@@ -368,10 +352,6 @@
         <div class="camera-wrapper">
             <video id="video" autoplay playsinline></video>
             <div class="scan-line"></div>
-            <div class="zoom-control">
-                <input type="range" id="zoomSlider" min="1" max="4" step="0.1" value="1" aria-label="Зум">
-                <span class="zoom-label" id="zoomLabel">1.0×</span>
-            </div>
         </div>
 
         <div class="bottom-bar">
@@ -435,12 +415,13 @@
         }
     }
 
-    // ================= ЗУМ (двигается только камера) =================
-    const zoomSlider = document.getElementById('zoomSlider');
-    const zoomLabel = document.getElementById('zoomLabel');
+    // ================= ЗУМ (двигается только камера, плавно) =================
     let videoTrack = null;
     let hwZoom = false;      // true — аппаратный зум камеры, false — цифровой (запасной)
-    let zoomLevel = 1, zoomMin = 1, zoomMax = 4;
+    let zoomLevel = 1;       // текущее значение (плавно догоняет цель)
+    let zoomTarget = 1;      // куда тянут пальцами
+    let zoomMin = 1, zoomMax = 4;
+    let zoomRaf = null, hwPending = false, lastHwZoom = null;
 
     function setupZoom() {
         videoTrack = stream.getVideoTracks()[0];
@@ -449,31 +430,46 @@
             hwZoom = true;
             zoomMin = caps.zoom.min;
             zoomMax = Math.min(caps.zoom.max, 8);
-            zoomSlider.step = caps.zoom.step || 0.1;
         } else {
             hwZoom = false;
             zoomMin = 1;
             zoomMax = 4;
-            zoomSlider.step = 0.1;
         }
-        zoomSlider.min = zoomMin;
-        zoomSlider.max = zoomMax;
-        applyZoom(zoomMin);
+        zoomLevel = zoomTarget = zoomMin;
+        lastHwZoom = null;
+        renderZoom();
     }
 
-    function applyZoom(value) {
-        zoomLevel = Math.min(zoomMax, Math.max(zoomMin, value));
-        zoomSlider.value = zoomLevel;
-        zoomLabel.textContent = zoomLevel.toFixed(1) + '×';
+    function setZoomTarget(value) {
+        zoomTarget = Math.min(zoomMax, Math.max(zoomMin, value));
+        if (!zoomRaf) zoomRaf = requestAnimationFrame(zoomStep);
+    }
+
+    // Каждый кадр приближаем текущий зум к цели — получается плавное движение
+    function zoomStep() {
+        zoomRaf = null;
+        const diff = zoomTarget - zoomLevel;
+        zoomLevel = Math.abs(diff) < 0.005 ? zoomTarget : zoomLevel + diff * 0.2;
+        renderZoom();
+        if (zoomLevel !== zoomTarget) zoomRaf = requestAnimationFrame(zoomStep);
+    }
+
+    function renderZoom() {
         if (hwZoom && videoTrack) {
             video.style.transform = '';
-            videoTrack.applyConstraints({ advanced: [{ zoom: zoomLevel }] }).catch(() => {});
+            if (hwPending) return;               // не заваливаем камеру запросами
+            hwPending = true;
+            lastHwZoom = zoomLevel;
+            videoTrack.applyConstraints({ advanced: [{ zoom: zoomLevel }] })
+                .catch(() => {})
+                .finally(() => {
+                    hwPending = false;
+                    if (lastHwZoom !== zoomLevel) renderZoom();   // догоняем последнее значение
+                });
         } else {
             video.style.transform = 'scale(' + zoomLevel + ')';
         }
     }
-
-    zoomSlider.addEventListener('input', () => applyZoom(parseFloat(zoomSlider.value)));
 
     // Щипок двумя пальцами по области камеры
     const camWrapper = document.querySelector('.camera-wrapper');
@@ -482,16 +478,22 @@
     camWrapper.addEventListener('touchstart', (e) => {
         if (e.touches.length === 2) {
             pinchStartDist = touchDist(e.touches);
-            pinchStartZoom = zoomLevel;
+            pinchStartZoom = zoomTarget;
         }
     }, { passive: false });
     camWrapper.addEventListener('touchmove', (e) => {
         if (e.touches.length === 2 && pinchStartDist) {
             e.preventDefault();
-            applyZoom(pinchStartZoom * touchDist(e.touches) / pinchStartDist);
+            setZoomTarget(pinchStartZoom * touchDist(e.touches) / pinchStartDist);
         }
     }, { passive: false });
     camWrapper.addEventListener('touchend', () => { pinchStartDist = 0; });
+
+    // Колесо мыши / тачпад на компьютере
+    camWrapper.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        setZoomTarget(zoomTarget * (1 - e.deltaY * 0.01));
+    }, { passive: false });
 
     // Рисует кадр в canvas; при цифровом зуме берет центральную часть, как видит пользователь
     function drawVideoFrame() {
