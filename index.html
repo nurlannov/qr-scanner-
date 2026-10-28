@@ -88,8 +88,24 @@
         .flash-icon { margin-top: 2px; }
         .flash-icon svg { width: 18px; height: 28px; display: block; }
 
-        .camera-wrapper { position: relative; flex: 1; background: #000; overflow: hidden; }
-        video { width: 100%; height: 100%; object-fit: cover; }
+        .camera-wrapper { position: relative; flex: 1; background: #000; overflow: hidden; touch-action: none; }
+        video { width: 100%; height: 100%; object-fit: cover; transform-origin: center center; }
+
+        /* Зум: двигается только картинка с камеры, интерфейс остается на месте */
+        .zoom-control {
+            position: absolute;
+            left: 16px; right: 16px; bottom: 12px;
+            z-index: 5;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 6px 14px;
+            background: rgba(0,0,0,0.45);
+            border-radius: 20px;
+            touch-action: auto;
+        }
+        .zoom-control input[type=range] { flex: 1; accent-color: #facc15; }
+        .zoom-label { min-width: 36px; text-align: right; font-size: 12px; font-weight: 600; color: #fff; }
 
         .scan-line {
             position: absolute; left: 0; right: 0; top: 50%; height: 2px;
@@ -352,6 +368,10 @@
         <div class="camera-wrapper">
             <video id="video" autoplay playsinline></video>
             <div class="scan-line"></div>
+            <div class="zoom-control">
+                <input type="range" id="zoomSlider" min="1" max="4" step="0.1" value="1" aria-label="Зум">
+                <span class="zoom-label" id="zoomLabel">1.0×</span>
+            </div>
         </div>
 
         <div class="bottom-bar">
@@ -407,10 +427,82 @@
             });
             video.srcObject = stream;
             video.play();
+            setupZoom();
             scanning = true;
             requestAnimationFrame(tick);
         } catch (err) {
             console.error("Ошибка камеры:", err);
+        }
+    }
+
+    // ================= ЗУМ (двигается только камера) =================
+    const zoomSlider = document.getElementById('zoomSlider');
+    const zoomLabel = document.getElementById('zoomLabel');
+    let videoTrack = null;
+    let hwZoom = false;      // true — аппаратный зум камеры, false — цифровой (запасной)
+    let zoomLevel = 1, zoomMin = 1, zoomMax = 4;
+
+    function setupZoom() {
+        videoTrack = stream.getVideoTracks()[0];
+        const caps = (videoTrack && videoTrack.getCapabilities) ? videoTrack.getCapabilities() : {};
+        if (caps.zoom) {
+            hwZoom = true;
+            zoomMin = caps.zoom.min;
+            zoomMax = Math.min(caps.zoom.max, 8);
+            zoomSlider.step = caps.zoom.step || 0.1;
+        } else {
+            hwZoom = false;
+            zoomMin = 1;
+            zoomMax = 4;
+            zoomSlider.step = 0.1;
+        }
+        zoomSlider.min = zoomMin;
+        zoomSlider.max = zoomMax;
+        applyZoom(zoomMin);
+    }
+
+    function applyZoom(value) {
+        zoomLevel = Math.min(zoomMax, Math.max(zoomMin, value));
+        zoomSlider.value = zoomLevel;
+        zoomLabel.textContent = zoomLevel.toFixed(1) + '×';
+        if (hwZoom && videoTrack) {
+            video.style.transform = '';
+            videoTrack.applyConstraints({ advanced: [{ zoom: zoomLevel }] }).catch(() => {});
+        } else {
+            video.style.transform = 'scale(' + zoomLevel + ')';
+        }
+    }
+
+    zoomSlider.addEventListener('input', () => applyZoom(parseFloat(zoomSlider.value)));
+
+    // Щипок двумя пальцами по области камеры
+    const camWrapper = document.querySelector('.camera-wrapper');
+    let pinchStartDist = 0, pinchStartZoom = 1;
+    function touchDist(t) { return Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY); }
+    camWrapper.addEventListener('touchstart', (e) => {
+        if (e.touches.length === 2) {
+            pinchStartDist = touchDist(e.touches);
+            pinchStartZoom = zoomLevel;
+        }
+    }, { passive: false });
+    camWrapper.addEventListener('touchmove', (e) => {
+        if (e.touches.length === 2 && pinchStartDist) {
+            e.preventDefault();
+            applyZoom(pinchStartZoom * touchDist(e.touches) / pinchStartDist);
+        }
+    }, { passive: false });
+    camWrapper.addEventListener('touchend', () => { pinchStartDist = 0; });
+
+    // Рисует кадр в canvas; при цифровом зуме берет центральную часть, как видит пользователь
+    function drawVideoFrame() {
+        const vw = video.videoWidth, vh = video.videoHeight;
+        canvas.width = vw;
+        canvas.height = vh;
+        if (!hwZoom && zoomLevel > 1) {
+            const cw = vw / zoomLevel, ch = vh / zoomLevel;
+            ctx.drawImage(video, (vw - cw) / 2, (vh - ch) / 2, cw, ch, 0, 0, vw, vh);
+        } else {
+            ctx.drawImage(video, 0, 0, vw, vh);
         }
     }
 
@@ -422,24 +514,39 @@
         }
     }
 
+    const SCAN_COOLDOWN = 5000;   // пауза после успешного скана (мс) — без звука и баннера
+    const SCAN_INTERVAL = 150;    // как часто искать QR в кадре (мс)
+    const CODE_GONE_MS  = 1500;   // сколько QR должен отсутствовать в кадре, чтобы считался убранным
+    let lastDecodeTime = 0;
+    let lastCodeData = null;      // содержимое последнего принятого QR
+    let lastCodeSeen = 0;         // когда последний раз QR был виден в кадре
+
     function tick() {
         if (!scanning) return;
-        if (video.readyState === video.HAVE_ENOUGH_DATA) {
-            canvas.width = video.videoWidth;
-            canvas.height = video.videoHeight;
-            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const now = Date.now();
+        if (video.readyState === video.HAVE_ENOUGH_DATA && now - lastDecodeTime >= SCAN_INTERVAL) {
+            lastDecodeTime = now;
+            drawVideoFrame();
             const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
             const code = jsQR(imageData.data, imageData.width, imageData.height);
 
-            if (code && (Date.now() - lastScanTime > 3000)) {
-                lastScanTime = Date.now();
-                onTicketDetected();
+            if (code) {
+                const inCooldown = now - lastScanTime < SCAN_COOLDOWN;
+                // тот же самый QR все еще перед камерой — не принимаем повторно, пока его не уберут
+                const sameStillInView = code.data === lastCodeData && now - lastCodeSeen < CODE_GONE_MS;
+                lastCodeSeen = now;
+
+                if (!inCooldown && !sameStillInView) {
+                    lastCodeData = code.data;
+                    onTicketDetected();
+                }
             }
         }
         requestAnimationFrame(tick);
     }
 
     function onTicketDetected() {
+        lastScanTime = Date.now();
         beepSound.currentTime = 0;
         beepSound.play().catch(() => {});
         banner.style.display = 'block';
@@ -451,9 +558,7 @@
     // ================= ЛОГИКА ФОТОГРАФИРОВАНИЯ (CLOUDINARY + SUPABASE) =================
     async function capturePhoto() {
         if (video.readyState === video.HAVE_ENOUGH_DATA) {
-            canvas.width = video.videoWidth;
-            canvas.height = video.videoHeight;
-            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            drawVideoFrame();
             
             const dataUrl = canvas.toDataURL('image/jpeg', 0.6);
 
