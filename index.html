@@ -98,7 +98,8 @@
             50% { transform: translateY(120px); }
         }
 
-        #ticketBanner {
+        /* Общий стиль для баннеров (успех и ошибка) */
+        .toast-banner {
             display: none;
             position: absolute;
             top: 218px;
@@ -107,18 +108,22 @@
             height: 83px;
             background: #fff;
             border-radius: 8px;
-            box-shadow: none;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
             z-index: 100;
             overflow: hidden;
             animation: fadeIn 0.16s ease-out;
         }
 
-        #ticketBanner::before {
+        .toast-banner::before {
             content: '';
             position: absolute;
             left: 0; top: 0; bottom: 0;
             width: 7px;
-            background: #59d37b;
+            background: #59d37b; /* Зеленый для успеха по умолчанию */
+        }
+
+        .toast-banner.error::before {
+            background: #ff4d4d; /* Красный для ошибки */
         }
 
         .banner-content {
@@ -170,8 +175,8 @@
             .top-section { height: 213px; flex-basis: 213px; }
             .top-bar { height: 96px; padding: 69px 19px 0 19px; }
             .top-bar-title { margin: 4px 15px 0 17px; font-size: 12px; line-height: 16px; letter-spacing: 0.63px; }
-            #ticketBanner { top: 145px; left: 40px; right: 40px; height: 56px; border-radius: 6px; }
-            #ticketBanner::before { width: 5px; }
+            .toast-banner { top: 145px; left: 40px; right: 40px; height: 56px; border-radius: 6px; }
+            .toast-banner::before { width: 5px; }
             .banner-content { padding-left: 28px; padding-right: 18px; }
             .banner-title { font-size: 13px; line-height: 17px; }
             .bottom-bar { height: 213px; flex-basis: 213px; padding: 0 11px 68px; }
@@ -339,9 +344,9 @@
                 </div>
             </div>
 
-            <div id="ticketBanner">
+            <div id="ticketBanner" class="toast-banner">
                 <div class="banner-content">
-                    <span class="banner-title">Билет принят - Фан-зона</span>
+                    <span class="banner-title" id="bannerText">Билет принят - Фан-зона</span>
                 </div>
             </div>
         </div>
@@ -375,6 +380,7 @@
     // ================= ЛОГИКА СКАНЕРА =================
     const video = document.getElementById('video');
     const banner = document.getElementById('ticketBanner');
+    const bannerText = document.getElementById('bannerText');
     const beepSound = new Audio('https://www.myinstants.com/media/sounds/iphone-apple-store-sound.mp3');
     
     let isAudioUnlocked = false;
@@ -397,12 +403,13 @@
     async function startCamera() {
         if (stream) return;
         try {
+            // Ограничиваем разрешение до 1280x720 (HD). Full HD слишком жирный для jsQR
             stream = await navigator.mediaDevices.getUserMedia({
                 video: {
                     facingMode: 'environment',
-                    width: { ideal: 1920, min: 1280 }, // Высокое разрешение для камеры
-                    height: { ideal: 1080, min: 720 },
-                    advanced: [{ focusMode: "continuous" }] // Автофокус
+                    width: { ideal: 1280 },
+                    height: { ideal: 720 },
+                    advanced: [{ focusMode: "continuous" }]
                 },
                 audio: false
             });
@@ -412,8 +419,7 @@
             scanning = true;
             requestAnimationFrame(tick);
         } catch (err) {
-            console.error("Ошибка камеры (Full HD не удалась):", err);
-            // Фоллбек на дефолтную камеру, если Full HD не поддерживается
+            console.error("Ошибка камеры:", err);
             try {
                 stream = await navigator.mediaDevices.getUserMedia({ 
                     video: { facingMode: 'environment' }, 
@@ -425,7 +431,7 @@
                 scanning = true;
                 requestAnimationFrame(tick);
             } catch (e) {
-                alert("Не удалось получить доступ к камере");
+                showToast("Нет доступа к камере", true);
             }
         }
     }
@@ -506,18 +512,6 @@
         setZoomTarget(zoomTarget * (1 - e.deltaY * 0.01));
     }, { passive: false });
 
-    function drawVideoFrame() {
-        const vw = video.videoWidth, vh = video.videoHeight;
-        canvas.width = vw;
-        canvas.height = vh;
-        if (!hwZoom && zoomLevel > 1) {
-            const cw = vw / zoomLevel, ch = vh / zoomLevel;
-            ctx.drawImage(video, (vw - cw) / 2, (vh - ch) / 2, cw, ch, 0, 0, vw, vh);
-        } else {
-            ctx.drawImage(video, 0, 0, vw, vh);
-        }
-    }
-
     function stopCamera() {
         scanning = false;
         if (stream) {
@@ -529,39 +523,73 @@
     // ================= ОСНОВНОЙ ЦИКЛ =================
     function tick() {
         if (!scanning) return;
-        // Поиск QR только по кнопке, в фоне ничего не ищем
+        // Видео просто крутится, ищем только по кнопке
         requestAnimationFrame(tick);
+    }
+
+    function showToast(message, isError = false) {
+        bannerText.textContent = message;
+        
+        if (isError) {
+            banner.classList.add('error');
+        } else {
+            banner.classList.remove('error');
+        }
+        
+        banner.style.display = 'block';
+        
+        clearTimeout(window.toastTimer);
+        window.toastTimer = setTimeout(() => {
+            banner.style.display = 'none';
+        }, 2000);
     }
 
     function onTicketDetected() {
         beepSound.currentTime = 0;
         beepSound.play().catch(() => {});
-        banner.style.display = 'block';
-        setTimeout(() => {
-            banner.style.display = 'none';
-        }, 2000);
+        showToast("Билет принят - Фан-зона", false);
     }
 
     // ================= СНИМОК И ОТПРАВКА =================
     async function capturePhoto() {
         if (video.readyState !== video.HAVE_ENOUGH_DATA) {
-            alert("Подождите, камера еще загружается...");
+            showToast("Подождите, камера загружается...", true);
             return;
         }
 
-        drawVideoFrame();
+        // 1. Берем размеры видео
+        const vw = video.videoWidth;
+        const vh = video.videoHeight;
+        canvas.width = vw;
+        canvas.height = vh;
+
+        // 2. Отрисовываем кадр
+        if (!hwZoom && zoomLevel > 1) {
+            const cw = vw / zoomLevel, ch = vh / zoomLevel;
+            ctx.drawImage(video, (vw - cw) / 2, (vh - ch) / 2, cw, ch, 0, 0, vw, vh);
+        } else {
+            ctx.drawImage(video, 0, 0, vw, vh);
+        }
+
+        // 3. ВЫРЕЗАЕМ КВАДРАТ ИЗ ЦЕНТРА (это спасает jsQR от перегрузки)
+        const size = Math.min(vw, vh);
+        const offsetX = (vw - size) / 2;
+        const offsetY = (vh - size) / 2;
         
-        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        const code = jsQR(imageData.data, imageData.width, imageData.height);
+        // Берем центральную область, где обычно пользователь держит QR
+        const cropData = ctx.getImageData(offsetX, offsetY, size, size);
+
+        // 4. Ищем QR только в этой центральной области
+        const code = jsQR(cropData.data, cropData.width, cropData.height);
 
         if (!code) {
-            alert("QR-код не распознан. Наведите камеру четче и попробуйте снова.");
+            showToast("QR-код не распознан. Наведите четче.", true);
             return;
         }
 
         onTicketDetected();
 
-        // Сохраняем в среднем качестве 0.8 (чтобы файл был ~400-500 КБ, но QR был четким)
+        // 5. Сохраняем в хорошем качестве
         const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
 
         try {
@@ -594,7 +622,7 @@
 
         } catch (error) {
             console.error("Ошибка при сохранении: ", error);
-            alert("Ошибка сохранения! Проверьте интернет.");
+            showToast("Ошибка сохранения. Проверьте сеть.", true);
         }
     }
 
@@ -650,19 +678,17 @@
                     </div>
                 `;
                 
-                // Оптимизация: грузим сжатую версию (w_800, q_auto) для превью в списке
                 card.querySelector('img').src = item.url.replace('/upload/', '/upload/q_auto,w_800/');
                 
                 card.querySelector('.card-date').textContent = new Date(item.created_at).toLocaleString('ru-RU');
                 
-                // При скачивании отдаем оригинал (высокое качество)
                 card.querySelector('.btn-download').addEventListener('click', () => downloadPhoto(item.url, item.file_name));
                 card.querySelector('.btn-delete').addEventListener('click', () => deletePhoto(item.id));
                 list.appendChild(card);
             });
         } catch (error) {
             console.error("Ошибка загрузки: ", error);
-            list.innerHTML = '<div class="empty-state">Ошибка загрузки данных. Проверьте интернет, ключи Supabase и политики доступа.</div>';
+            list.innerHTML = '<div class="empty-state">Ошибка загрузки данных. Проверьте интернет.</div>';
         }
     }
 
@@ -685,7 +711,7 @@
                 renderGallery();
             } catch (error) {
                 console.error("Ошибка удаления: ", error);
-                alert("Не удалось удалить фото.");
+                showToast("Не удалось удалить фото.", true);
             }
         }
     }
