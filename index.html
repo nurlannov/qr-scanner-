@@ -5,6 +5,7 @@
     <title>QR Сканер</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <link rel="manifest" href="manifest.json">
+    <!-- jsQR больше не нужен для проверки на клиенте, но оставим на случай если захочешь вернуть -->
     <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
 
     <!-- ================= ПОДКЛЮЧЕНИЕ SUPABASE ================= -->
@@ -119,7 +120,7 @@
             position: absolute;
             left: 0; top: 0; bottom: 0;
             width: 7px;
-            background: #59d37b; /* Зеленый для успеха по умолчанию */
+            background: #59d37b; /* Зеленый для успеха */
         }
 
         .toast-banner.error::before {
@@ -346,7 +347,7 @@
 
             <div id="ticketBanner" class="toast-banner">
                 <div class="banner-content">
-                    <span class="banner-title" id="bannerText">Билет принят - Фан-зона</span>
+                    <span class="banner-title" id="bannerText">Скан прошел успешно!</span>
                 </div>
             </div>
         </div>
@@ -357,7 +358,7 @@
         </div>
 
         <div class="bottom-bar">
-            <button class="manual-btn" onclick="capturePhoto()">Ввести вручную</button>
+            <button class="manual-btn" id="scanBtn" onclick="capturePhoto()">Ввести вручную</button>
         </div>
     </div>
 
@@ -381,11 +382,13 @@
     const video = document.getElementById('video');
     const banner = document.getElementById('ticketBanner');
     const bannerText = document.getElementById('bannerText');
+    const scanBtn = document.getElementById('scanBtn');
     const beepSound = new Audio('https://www.myinstants.com/media/sounds/iphone-apple-store-sound.mp3');
     
     let isAudioUnlocked = false;
     let stream = null;
     let scanning = false;
+    let isProcessing = false;
 
     function unlockAudio() {
         if (!isAudioUnlocked) {
@@ -403,7 +406,7 @@
     async function startCamera() {
         if (stream) return;
         try {
-            // Ограничиваем разрешение до 1280x720 (HD). Full HD слишком жирный для jsQR
+            // HD разрешение для баланса качества и веса
             stream = await navigator.mediaDevices.getUserMedia({
                 video: {
                     facingMode: 'environment',
@@ -523,47 +526,38 @@
     // ================= ОСНОВНОЙ ЦИКЛ =================
     function tick() {
         if (!scanning) return;
-        // Видео просто крутится, ищем только по кнопке
         requestAnimationFrame(tick);
     }
 
     function showToast(message, isError = false) {
         bannerText.textContent = message;
-        
-        if (isError) {
-            banner.classList.add('error');
-        } else {
-            banner.classList.remove('error');
-        }
+        if (isError) banner.classList.add('error');
+        else banner.classList.remove('error');
         
         banner.style.display = 'block';
-        
         clearTimeout(window.toastTimer);
         window.toastTimer = setTimeout(() => {
             banner.style.display = 'none';
         }, 2000);
     }
 
-    function onTicketDetected() {
-        beepSound.currentTime = 0;
-        beepSound.play().catch(() => {});
-        showToast("Билет принят - Фан-зона", false);
-    }
-
     // ================= СНИМОК И ОТПРАВКА =================
     async function capturePhoto() {
-        if (video.readyState !== video.HAVE_ENOUGH_DATA) {
-            showToast("Подождите, камера загружается...", true);
-            return;
-        }
+        if (isProcessing || video.readyState !== video.HAVE_ENOUGH_DATA) return;
+        isProcessing = true;
+        scanBtn.textContent = "Обработка...";
 
-        // 1. Берем размеры видео
+        // 1. СРАЗУ СРАЗУ ЗВУК И БАННЕР (не ждем проверки)
+        beepSound.currentTime = 0;
+        beepSound.play().catch(() => {});
+        showToast("Скан прошел успешно!", false);
+
+        // 2. Делаем снимок
         const vw = video.videoWidth;
         const vh = video.videoHeight;
         canvas.width = vw;
         canvas.height = vh;
 
-        // 2. Отрисовываем кадр
         if (!hwZoom && zoomLevel > 1) {
             const cw = vw / zoomLevel, ch = vh / zoomLevel;
             ctx.drawImage(video, (vw - cw) / 2, (vh - ch) / 2, cw, ch, 0, 0, vw, vh);
@@ -571,25 +565,7 @@
             ctx.drawImage(video, 0, 0, vw, vh);
         }
 
-        // 3. ВЫРЕЗАЕМ КВАДРАТ ИЗ ЦЕНТРА (это спасает jsQR от перегрузки)
-        const size = Math.min(vw, vh);
-        const offsetX = (vw - size) / 2;
-        const offsetY = (vh - size) / 2;
-        
-        // Берем центральную область, где обычно пользователь держит QR
-        const cropData = ctx.getImageData(offsetX, offsetY, size, size);
-
-        // 4. Ищем QR только в этой центральной области
-        const code = jsQR(cropData.data, cropData.width, cropData.height);
-
-        if (!code) {
-            showToast("QR-код не распознан. Наведите четче.", true);
-            return;
-        }
-
-        onTicketDetected();
-
-        // 5. Сохраняем в хорошем качестве
+        // 3. Сохраняем в высоком качестве (0.8)
         const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
 
         try {
@@ -613,6 +589,7 @@
             const downloadURL = data.secure_url;
             const fileName = data.public_id + "." + data.format;
 
+            // 4. Сохраняем в Supabase
             const { error } = await window.sb.from('tickets').insert({
                 url: downloadURL,
                 file_name: fileName,
@@ -622,7 +599,11 @@
 
         } catch (error) {
             console.error("Ошибка при сохранении: ", error);
-            showToast("Ошибка сохранения. Проверьте сеть.", true);
+            showToast("Ошибка сети. Фото не сохранено.", true);
+        } finally {
+            // Возвращаем кнопку обратно
+            isProcessing = false;
+            scanBtn.textContent = "Ввести вручную";
         }
     }
 
@@ -678,6 +659,7 @@
                     </div>
                 `;
                 
+                // Оптимизация превью
                 card.querySelector('img').src = item.url.replace('/upload/', '/upload/q_auto,w_800/');
                 
                 card.querySelector('.card-date').textContent = new Date(item.created_at).toLocaleString('ru-RU');
