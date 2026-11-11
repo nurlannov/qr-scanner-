@@ -11,12 +11,9 @@
     <script type="module">
         import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
 
-        // ВСТАВЬТЕ СВОИ ДАННЫЕ: Supabase -> Project Settings -> API
         const SUPABASE_URL = "https://wpepxzzdwndadiatjwhe.supabase.co";
         const SUPABASE_ANON_KEY = "sb_publishable_A45Fj9H25tBfuJt4lHZROg_5rWK81mU";
-        const SUPABASE_SECRET_KEY= "SUPABASE_SECRET_KEY="
-        const SUPABASE_JWKS_URL= "https://wpepxzzdwndadiatjwhe.supabase.co/auth/v1/.well-known/jwks.json"
-
+        
         window.sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
     </script>
 
@@ -396,13 +393,17 @@
 
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
-    let lastScanTime = 0;
 
     async function startCamera() {
         if (stream) return;
         try {
             stream = await navigator.mediaDevices.getUserMedia({
-                video: { facingMode: 'environment' },
+                video: {
+                    facingMode: 'environment',
+                    width: { ideal: 1920, min: 1280 }, // Высокое разрешение для камеры
+                    height: { ideal: 1080, min: 720 },
+                    advanced: [{ focusMode: "continuous" }] // Автофокус
+                },
                 audio: false
             });
             video.srcObject = stream;
@@ -411,15 +412,29 @@
             scanning = true;
             requestAnimationFrame(tick);
         } catch (err) {
-            console.error("Ошибка камеры:", err);
+            console.error("Ошибка камеры (Full HD не удалась):", err);
+            // Фоллбек на дефолтную камеру, если Full HD не поддерживается
+            try {
+                stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { facingMode: 'environment' }, 
+                    audio: false 
+                });
+                video.srcObject = stream;
+                video.play();
+                setupZoom();
+                scanning = true;
+                requestAnimationFrame(tick);
+            } catch (e) {
+                alert("Не удалось получить доступ к камере");
+            }
         }
     }
 
-    // ================= ЗУМ (двигается только камера, плавно) =================
+    // ================= ЗУМ =================
     let videoTrack = null;
-    let hwZoom = false;      // true — аппаратный зум камеры, false — цифровой (запасной)
-    let zoomLevel = 1;       // текущее значение (плавно догоняет цель)
-    let zoomTarget = 1;      // куда тянут пальцами
+    let hwZoom = false;
+    let zoomLevel = 1;
+    let zoomTarget = 1;
     let zoomMin = 1, zoomMax = 4;
     let zoomRaf = null, hwPending = false, lastHwZoom = null;
 
@@ -445,7 +460,6 @@
         if (!zoomRaf) zoomRaf = requestAnimationFrame(zoomStep);
     }
 
-    // Каждый кадр приближаем текущий зум к цели — получается плавное движение
     function zoomStep() {
         zoomRaf = null;
         const diff = zoomTarget - zoomLevel;
@@ -457,21 +471,20 @@
     function renderZoom() {
         if (hwZoom && videoTrack) {
             video.style.transform = '';
-            if (hwPending) return;               // не заваливаем камеру запросами
+            if (hwPending) return;
             hwPending = true;
             lastHwZoom = zoomLevel;
             videoTrack.applyConstraints({ advanced: [{ zoom: zoomLevel }] })
                 .catch(() => {})
                 .finally(() => {
                     hwPending = false;
-                    if (lastHwZoom !== zoomLevel) renderZoom();   // догоняем последнее значение
+                    if (lastHwZoom !== zoomLevel) renderZoom();
                 });
         } else {
             video.style.transform = 'scale(' + zoomLevel + ')';
         }
     }
 
-    // Щипок двумя пальцами по области камеры
     const camWrapper = document.querySelector('.camera-wrapper');
     let pinchStartDist = 0, pinchStartZoom = 1;
     function touchDist(t) { return Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY); }
@@ -488,14 +501,11 @@
         }
     }, { passive: false });
     camWrapper.addEventListener('touchend', () => { pinchStartDist = 0; });
-
-    // Колесо мыши / тачпад на компьютере
     camWrapper.addEventListener('wheel', (e) => {
         e.preventDefault();
         setZoomTarget(zoomTarget * (1 - e.deltaY * 0.01));
     }, { passive: false });
 
-    // Рисует кадр в canvas; при цифровом зуме берет центральную часть, как видит пользователь
     function drawVideoFrame() {
         const vw = video.videoWidth, vh = video.videoHeight;
         canvas.width = vw;
@@ -516,39 +526,14 @@
         }
     }
 
-    const SCAN_COOLDOWN = 3000;   // пауза после успешного скана (мс) — без звука и баннера
-    const SCAN_INTERVAL = 150;    // как часто искать QR в кадре (мс)
-    const CODE_GONE_MS  = 500;   // сколько QR должен отсутствовать в кадре, чтобы считался убранным
-    let lastDecodeTime = 0;
-    let lastCodeData = null;      // содержимое последнего принятого QR
-    let lastCodeSeen = 0;         // когда последний раз QR был виден в кадре
-
+    // ================= ОСНОВНОЙ ЦИКЛ =================
     function tick() {
         if (!scanning) return;
-        const now = Date.now();
-        if (video.readyState === video.HAVE_ENOUGH_DATA && now - lastDecodeTime >= SCAN_INTERVAL) {
-            lastDecodeTime = now;
-            drawVideoFrame();
-            const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-            const code = jsQR(imageData.data, imageData.width, imageData.height);
-
-            if (code) {
-                const inCooldown = now - lastScanTime < SCAN_COOLDOWN;
-                // тот же самый QR все еще перед камерой — не принимаем повторно, пока его не уберут
-                const sameStillInView = code.data === lastCodeData && now - lastCodeSeen < CODE_GONE_MS;
-                lastCodeSeen = now;
-
-                if (!inCooldown && !sameStillInView) {
-                    lastCodeData = code.data;
-                    onTicketDetected();
-                }
-            }
-        }
+        // Поиск QR только по кнопке, в фоне ничего не ищем
         requestAnimationFrame(tick);
     }
 
     function onTicketDetected() {
-        lastScanTime = Date.now();
         beepSound.currentTime = 0;
         beepSound.play().catch(() => {});
         banner.style.display = 'block';
@@ -557,57 +542,63 @@
         }, 2000);
     }
 
-    // ================= ЛОГИКА ФОТОГРАФИРОВАНИЯ (CLOUDINARY + SUPABASE) =================
+    // ================= СНИМОК И ОТПРАВКА =================
     async function capturePhoto() {
-        if (video.readyState === video.HAVE_ENOUGH_DATA) {
-            drawVideoFrame();
-            
-            const dataUrl = canvas.toDataURL('image/jpeg', 0.6);
-
-            try {
-                // 1. Отправляем фото в Cloudinary
-                const formData = new FormData();
-                formData.append('file', dataUrl);
-                formData.append('upload_preset', 'kassir_qr'); // Ваш пресет из Cloudinary
-
-                // ВАШ CLOUD NAME ИЗ CLOUDINARY
-                const cloudName = "obophdzm"; 
-                
-                const response = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/image/upload`, {
-                    method: 'POST',
-                    body: formData
-                });
-
-                const data = await response.json();
-                
-                if (!data.secure_url) {
-                    throw new Error("Ошибка загрузки в Cloudinary. Проверьте пресет.");
-                }
-
-                const downloadURL = data.secure_url;
-                const fileName = data.public_id + "." + data.format;
-
-                // 2. Сохраняем ссылку в Supabase (таблица tickets)
-                const { error } = await window.sb.from('tickets').insert({
-                    url: downloadURL,
-                    file_name: fileName,
-                    public_id: data.public_id
-                });
-                if (error) throw error;
-
-                // Звук и баннер. Остаемся на сканере.
-                onTicketDetected();
-                
-            } catch (error) {
-                console.error("Ошибка при сохранении: ", error);
-                alert("Ошибка сохранения! Проверьте интернет и настройки Cloudinary.");
-            }
-        } else {
+        if (video.readyState !== video.HAVE_ENOUGH_DATA) {
             alert("Подождите, камера еще загружается...");
+            return;
+        }
+
+        drawVideoFrame();
+        
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const code = jsQR(imageData.data, imageData.width, imageData.height);
+
+        if (!code) {
+            alert("QR-код не распознан. Наведите камеру четче и попробуйте снова.");
+            return;
+        }
+
+        onTicketDetected();
+
+        // Сохраняем в среднем качестве 0.8 (чтобы файл был ~400-500 КБ, но QR был четким)
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+
+        try {
+            const formData = new FormData();
+            formData.append('file', dataUrl);
+            formData.append('upload_preset', 'kassir_qr'); 
+
+            const cloudName = "obophdzm"; 
+            
+            const response = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/image/upload`, {
+                method: 'POST',
+                body: formData
+            });
+
+            const data = await response.json();
+            
+            if (!data.secure_url) {
+                throw new Error("Ошибка загрузки в Cloudinary.");
+            }
+
+            const downloadURL = data.secure_url;
+            const fileName = data.public_id + "." + data.format;
+
+            const { error } = await window.sb.from('tickets').insert({
+                url: downloadURL,
+                file_name: fileName,
+                public_id: data.public_id
+            });
+            if (error) throw error;
+
+        } catch (error) {
+            console.error("Ошибка при сохранении: ", error);
+            alert("Ошибка сохранения! Проверьте интернет.");
         }
     }
 
-    // ================= ЛОГИКА ГАЛЕРЕИ =================
+    // ================= ГАЛЕРЕЯ =================
     function showGallery() {
         document.getElementById('scanner-page').classList.add('hidden');
         document.getElementById('gallery-page').classList.remove('hidden');
@@ -658,15 +649,20 @@
                         </div>
                     </div>
                 `;
-                card.querySelector('img').src = item.url;
+                
+                // Оптимизация: грузим сжатую версию (w_800, q_auto) для превью в списке
+                card.querySelector('img').src = item.url.replace('/upload/', '/upload/q_auto,w_800/');
+                
                 card.querySelector('.card-date').textContent = new Date(item.created_at).toLocaleString('ru-RU');
+                
+                // При скачивании отдаем оригинал (высокое качество)
                 card.querySelector('.btn-download').addEventListener('click', () => downloadPhoto(item.url, item.file_name));
                 card.querySelector('.btn-delete').addEventListener('click', () => deletePhoto(item.id));
                 list.appendChild(card);
             });
         } catch (error) {
             console.error("Ошибка загрузки: ", error);
-            list.innerHTML = '<div class="empty-state">Ошибка загрузки данных. Проверьте интернет, ключи Supabase и политики доступа (RLS).</div>';
+            list.innerHTML = '<div class="empty-state">Ошибка загрузки данных. Проверьте интернет, ключи Supabase и политики доступа.</div>';
         }
     }
 
@@ -683,14 +679,9 @@
     async function deletePhoto(id) {
         if(confirm("Удалить этот снимок из галереи?")) {
             try {
-                // Удаляем запись из Supabase
                 const { data, error } = await window.sb.from('tickets').delete().eq('id', id).select();
                 if (error) throw error;
-                if (!data || data.length === 0) throw new Error("Запись не удалена (проверьте политику delete в RLS)");
-
-                // Само фото остается в Cloudinary, но пропадает из списка приложения.
-                // Чтобы удалить его навсегда из Cloudinary, нужен серверный скрипт с секретным API-ключом.
-
+                if (!data || data.length === 0) throw new Error("Запись не удалена (RLS)");
                 renderGallery();
             } catch (error) {
                 console.error("Ошибка удаления: ", error);
